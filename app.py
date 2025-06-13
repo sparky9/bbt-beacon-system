@@ -308,33 +308,80 @@ class BeaconMonitor:
         
         return matched
     
-    def reddit_monitor(self):
-        """Monitor Reddit using mock data"""
-        logger.info("🔴 Starting Reddit monitor (mock mode)")
+    def extract_budget_from_text(self, text):
+        """Extract budget information from text"""
+        import re
+        budget_patterns = [
+            r'\$[\d,]+\s*-\s*\$[\d,]+',
+            r'Budget:\s*\$[\d,]+',
+            r'\$[\d,]+\s*(?:USD|usd)?',
+            r'[\d,]+\s*(?:dollars|USD)',
+            r'pay\s*\$[\d,]+',
+            r'budget\s*of\s*\$[\d,]+'
+        ]
         
-        while self.running:
-            try:
-                # Mock signals for testing
-                mock_signal = {
-                    'platform': 'reddit',
-                    'platform_id': f'reddit_{int(time.time())}',
-                    'title': 'Help needed - Production site throwing errors',
-                    'content': 'Our React app is showing blank pages for some users. Need urgent help to fix this!',
-                    'author': 'startup_founder',
-                    'url': 'https://reddit.com/r/webdev/mock',
-                    'created_utc': time.time(),
-                    'urgency_score': 25,
-                    'tech_stack': json.dumps(['react', 'javascript']),
-                    'keywords_matched': json.dumps(['help', 'urgent'])
-                }
-                
-                self.save_signal(mock_signal)
-                logger.info("🔴 Reddit scan complete")
-                
-            except Exception as e:
-                logger.error(f"Reddit monitor error: {e}")
+        for pattern in budget_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(0)
+        
+        return ''
+    
+    def reddit_monitor(self):
+        """Monitor Reddit for real crisis signals"""
+        logger.info("🔴 Starting Reddit monitor")
+        
+        if not self.credentials['reddit_client_id'] or not self.credentials['reddit_client_secret']:
+            logger.warning("Reddit credentials not configured - skipping Reddit monitoring")
+            return
             
-            time.sleep(300)  # 5 minutes
+        try:
+            import praw
+            
+            reddit = praw.Reddit(
+                client_id=self.credentials['reddit_client_id'],
+                client_secret=self.credentials['reddit_client_secret'],
+                user_agent='BBTBeacon/1.0'
+            )
+            
+            subreddits = ['webdev', 'programming', 'learnprogramming', 'freelance', 'forhire']
+            
+            while self.running:
+                for subreddit_name in subreddits:
+                    try:
+                        subreddit = reddit.subreddit(subreddit_name)
+                        
+                        for post in subreddit.new(limit=10):
+                            urgency_score = self.calculate_urgency(post.title, post.selftext)
+                            
+                            if urgency_score >= 10:  # Only save significant signals
+                                signal = {
+                                    'platform': 'reddit',
+                                    'platform_id': post.id,
+                                    'title': post.title,
+                                    'content': post.selftext[:500] if post.selftext else 'No content',
+                                    'author': str(post.author),
+                                    'url': f"https://reddit.com{post.permalink}",
+                                    'created_utc': post.created_utc,
+                                    'urgency_score': urgency_score,
+                                    'tech_stack': json.dumps(self.extract_tech_stack(post.title + ' ' + post.selftext)),
+                                    'keywords_matched': json.dumps(self.get_matched_keywords(post.title + ' ' + post.selftext))
+                                }
+                                
+                                self.save_signal(signal)
+                        
+                        time.sleep(2)  # Rate limiting between subreddits
+                        
+                    except Exception as e:
+                        logger.error(f"Reddit error for r/{subreddit_name}: {e}")
+                
+                logger.info("🔴 Reddit scan complete, sleeping 5 minutes...")
+                time.sleep(300)  # 5 minutes
+                
+        except ImportError:
+            logger.error("praw not installed - Reddit monitoring disabled")
+        except Exception as e:
+            logger.error(f"Reddit monitor error: {e}")
     
     def upwork_monitor(self):
         """Monitor Upwork RSS feeds"""
@@ -366,6 +413,7 @@ class BeaconMonitor:
                                     'url': entry.link,
                                     'created_utc': time.time(),
                                     'urgency_score': urgency_score,
+                                    'budget_range': self.extract_budget_from_text(entry.title + ' ' + entry.get('summary', '')),
                                     'tech_stack': json.dumps(self.extract_tech_stack(entry.title + ' ' + entry.get('summary', ''))),
                                     'keywords_matched': json.dumps(self.get_matched_keywords(entry.title + ' ' + entry.get('summary', '')))
                                 }
@@ -382,22 +430,7 @@ class BeaconMonitor:
                 time.sleep(600)  # 10 minutes
                 
         except ImportError:
-            logger.warning("feedparser not available, using mock data")
-            while self.running:
-                mock_signal = {
-                    'platform': 'upwork',
-                    'platform_id': f'upwork_{int(time.time())}',
-                    'title': 'Need React developer ASAP - $500',
-                    'content': 'Website is broken and need someone to fix it immediately. Budget $500.',
-                    'author': 'Upwork Client',
-                    'url': 'https://upwork.com/jobs/mock',
-                    'created_utc': time.time(),
-                    'urgency_score': 30,
-                    'tech_stack': json.dumps(['react']),
-                    'keywords_matched': json.dumps(['need', 'asap', 'broken'])
-                }
-                self.save_signal(mock_signal)
-                time.sleep(600)
+            logger.error("feedparser not installed - Upwork monitoring disabled")
     
     def github_monitor(self):
         """Monitor GitHub Issues"""
@@ -445,12 +478,64 @@ class BeaconMonitor:
             
             time.sleep(600)  # 10 minutes
     
+    def stackoverflow_monitor(self):
+        """Monitor Stack Overflow for help requests"""
+        logger.info("📚 Starting Stack Overflow monitor")
+        
+        import requests
+        
+        while self.running:
+            try:
+                # Stack Exchange API endpoint for newest questions
+                url = "https://api.stackexchange.com/2.3/questions"
+                params = {
+                    'order': 'desc',
+                    'sort': 'creation',
+                    'tagged': 'javascript;react;python;node.js',
+                    'site': 'stackoverflow',
+                    'filter': 'withbody',
+                    'pagesize': 20
+                }
+                
+                response = requests.get(url, params=params)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    for question in data.get('items', []):
+                        # Check if it's a help request
+                        urgency_score = self.calculate_urgency(question['title'], question.get('body', ''))
+                        
+                        if urgency_score >= 8:  # Stack Overflow threshold
+                            signal = {
+                                'platform': 'stackoverflow',
+                                'platform_id': str(question['question_id']),
+                                'title': question['title'],
+                                'content': question.get('body', '')[:500],
+                                'author': question['owner'].get('display_name', 'Anonymous'),
+                                'url': question['link'],
+                                'created_utc': question['creation_date'],
+                                'urgency_score': urgency_score,
+                                'tech_stack': json.dumps(question.get('tags', [])),
+                                'keywords_matched': json.dumps(self.get_matched_keywords(question['title'] + ' ' + question.get('body', '')))
+                            }
+                            
+                            self.save_signal(signal)
+                
+                logger.info("📚 Stack Overflow scan complete")
+                
+            except Exception as e:
+                logger.error(f"Stack Overflow monitor error: {e}")
+            
+            time.sleep(900)  # 15 minutes
+    
     def start_all_monitors(self):
         """Start all monitoring threads"""
         monitors = [
             threading.Thread(target=self.reddit_monitor, daemon=True, name="Reddit"),
             threading.Thread(target=self.upwork_monitor, daemon=True, name="Upwork"),
-            threading.Thread(target=self.github_monitor, daemon=True, name="GitHub")
+            threading.Thread(target=self.github_monitor, daemon=True, name="GitHub"),
+            threading.Thread(target=self.stackoverflow_monitor, daemon=True, name="StackOverflow")
         ]
         
         for monitor in monitors:
@@ -713,6 +798,7 @@ SIGNAL_DETAIL_TEMPLATE = '''
         .upwork { background: #14a800; color: white; }
         .github { background: #333; color: white; }
         .twitter { background: #1da1f2; color: white; }
+        .stackoverflow { background: #f48024; color: white; }
         .field {
             margin: 15px 0;
             padding: 15px;
