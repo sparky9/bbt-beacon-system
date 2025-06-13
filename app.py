@@ -5,8 +5,7 @@ All-in-one monitoring and dashboard service
 """
 
 from flask import Flask, render_template, request, redirect, session, jsonify
-import psycopg2
-import psycopg2.extras
+import psycopg
 import json
 import os
 import time
@@ -30,7 +29,7 @@ DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://bbt_beacon_database_user:
 
 def get_db_connection():
     """Get PostgreSQL database connection"""
-    return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+    return psycopg.connect(DATABASE_URL, row_factory=psycopg.rows.dict_row)
 
 # Password protection
 ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'beacon2025')
