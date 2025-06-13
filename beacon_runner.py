@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BBT Beacon Runner - Orchestrates all monitoring services
-Runs continuously on Railway
+PostgreSQL-powered continuous monitoring
 """
 
 import os

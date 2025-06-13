@@ -1,0 +1,69 @@
+{
+  "credentials": {
+    "reddit": {
+      "client_id": "YOUR_REDDIT_CLIENT_ID",
+      "client_secret": "YOUR_REDDIT_CLIENT_SECRET", 
+      "user_agent": "BBTBeacon/1.0 by YourUsername"
+    },
+    "twitter": {
+      "bearer_token": "YOUR_TWITTER_BEARER_TOKEN",
+      "enabled": true,
+      "api_tier": "free",
+      "monthly_limit": 100
+    },
+    "discord": {
+      "bot_token": "YOUR_DISCORD_BOT_TOKEN",
+      "enabled": true
+    },
+    "email": {
+      "from_email": "your-email@gmail.com",
+      "password": "your-app-password",
+      "to_email": "your-destination@email.com",
+      "smtp_server": "smtp.gmail.com",
+      "smtp_port": 587
+    }
+  },
+  "beacons": {
+    "reddit": {
+      "enabled": true,
+      "subreddits": ["webdev", "programming", "learnprogramming", "AskProgramming", "freelance"],
+      "check_interval": 300
+    },
+    "upwork": {
+      "enabled": true,
+      "scan_interval": 600,
+      "min_urgency_score": 5
+    },
+    "stackoverflow": {
+      "enabled": true,
+      "tags": ["javascript", "python", "react", "node.js", "typescript", "debugging"],
+      "min_score": -5
+    },
+    "twitter": {
+      "enabled": true,
+      "api_calls_per_day": 3,
+      "premium_searches_only": true,
+      "track_api_usage": true
+    },
+    "discord": {
+      "enabled": true,
+      "monitor_help_channels": true,
+      "response_delay": 5
+    }
+  },
+  "alerts": {
+    "email_enabled": true,
+    "min_urgency_for_email": 15,
+    "email_cooldown_minutes": 30
+  },
+  "dashboard": {
+    "enabled": true,
+    "port": 5000,
+    "auto_open": true,
+    "refresh_interval": 30
+  },
+  "a_b_testing": {
+    "enabled": true,
+    "test_allocation": 0.5
+  }
+}

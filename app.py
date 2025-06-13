@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BBT Beacon Web Dashboard for Railway
-Password-protected beacon control center
+PostgreSQL-powered beacon control center
 """
 
 from flask import Flask, render_template, request, redirect, session, jsonify
@@ -236,6 +236,7 @@ DASHBOARD_TEMPLATE = '''
         .discord { background: #7289da; color: white; }
         .upwork { background: #14a800; color: white; }
         .stackoverflow { background: #f48024; color: white; }
+        .github { background: #333; color: white; }
         .logout { 
             position: absolute; 
             top: 20px; 
@@ -250,7 +251,7 @@ DASHBOARD_TEMPLATE = '''
     
     <div class="header">
         <h1>🚨 BBT BEACON CONTROL CENTER 🚨</h1>
-        <p>24/7 Developer Crisis Monitoring System</p>
+        <p>24/7 Developer Crisis Monitoring System - PostgreSQL Powered</p>
         <p><em>Last updated: {{ moment().format('YYYY-MM-DD HH:mm:ss') }}</em></p>
     </div>
     
