@@ -195,6 +195,27 @@ def respond_to_signal(signal_id):
         logger.error(f"Error updating signal: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/signal/<int:signal_id>/delete', methods=['POST'])
+def delete_signal(signal_id):
+    """Delete a signal"""
+    if not check_auth():
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM multi_platform_signals WHERE id = %s', (signal_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        return redirect('/')
+        
+    except Exception as e:
+        logger.error(f"Error deleting signal: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/signals')
 def api_signals():
     """API endpoint for live signal updates"""
@@ -672,6 +693,20 @@ DASHBOARD_TEMPLATE = '''
             font-size: 12px; 
             margin-top: 10px;
         }
+        .delete-btn {
+            background: #ff4757;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            float: right;
+            margin-left: 10px;
+        }
+        .delete-btn:hover {
+            background: #ff3838;
+        }
     </style>
 </head>
 <body>
@@ -706,20 +741,25 @@ DASHBOARD_TEMPLATE = '''
     
     {% if signals %}
         {% for signal in signals %}
-        <div class="signal {{ 'urgent' if signal.urgency_score >= 30 else 'medium' if signal.urgency_score >= 15 else 'low' }}" style="cursor: pointer;" onclick="window.location.href='/signal/{{ signal.id }}'">
-            <span class="platform {{ signal.platform }}">{{ signal.platform.upper() }}</span>
-            <strong>{{ signal.title }}</strong>
-            <br>
-            <p>{{ signal.content }}</p>
-            <small>
-                👤 {{ signal.author }} | 
-                🎯 Score: {{ signal.urgency_score }} | 
-                ⏰ {{ signal.detected_at }}
-                | <a href="/signal/{{ signal.id }}" style="color: #00ff00;">View Details</a>
-                {% if signal.url %}
-                | <a href="{{ signal.url }}" target="_blank" style="color: #00ff00;" onclick="event.stopPropagation();">View Post</a>
-                {% endif %}
-            </small>
+        <div class="signal {{ 'urgent' if signal.urgency_score >= 30 else 'medium' if signal.urgency_score >= 15 else 'low' }}">
+            <form method="POST" action="/signal/{{ signal.id }}/delete" style="display: inline;">
+                <button type="submit" class="delete-btn" onclick="return confirm('Delete this signal?');">🗑️ Delete</button>
+            </form>
+            <div style="cursor: pointer;" onclick="window.location.href='/signal/{{ signal.id }}'">
+                <span class="platform {{ signal.platform }}">{{ signal.platform.upper() }}</span>
+                <strong>{{ signal.title }}</strong>
+                <br>
+                <p>{{ signal.content }}</p>
+                <small>
+                    👤 {{ signal.author }} | 
+                    🎯 Score: {{ signal.urgency_score }} | 
+                    ⏰ {{ signal.detected_at }}
+                    | <a href="/signal/{{ signal.id }}" style="color: #00ff00;" onclick="event.stopPropagation();">View Details</a>
+                    {% if signal.url %}
+                    | <a href="{{ signal.url }}" target="_blank" style="color: #00ff00;" onclick="event.stopPropagation();">View Post</a>
+                    {% endif %}
+                </small>
+            </div>
         </div>
         {% endfor %}
     {% else %}
@@ -862,6 +902,10 @@ SIGNAL_DETAIL_TEMPLATE = '''
             background: #666;
             color: white;
         }
+        .btn-danger {
+            background: #ff4757;
+            color: white;
+        }
         .responded-badge {
             background: #2ed573;
             color: white;
@@ -883,7 +927,12 @@ SIGNAL_DETAIL_TEMPLATE = '''
 <body>
     <div class="header">
         <h1>📡 Signal Details</h1>
-        <a href="/" class="back-btn">← Back to Dashboard</a>
+        <div>
+            <form method="POST" action="/signal/{{ signal.id }}/delete" style="display: inline;">
+                <button type="submit" class="btn btn-danger" onclick="return confirm('Delete this signal?');">🗑️ Delete Signal</button>
+            </form>
+            <a href="/" class="back-btn">← Back to Dashboard</a>
+        </div>
     </div>
     
     <div class="signal-detail">
