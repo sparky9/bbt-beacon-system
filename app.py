@@ -4,7 +4,7 @@ BBT Beacon System - Unified Dashboard & Scanner
 All-in-one monitoring and dashboard service
 """
 
-from flask import Flask, render_template, request, redirect, session, jsonify
+from flask import Flask, render_template_string, request, redirect, session, jsonify
 import psycopg
 import json
 import os
