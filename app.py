@@ -837,7 +837,7 @@ DASHBOARD_TEMPLATE = '''
         {% for signal in signals %}
         <div class="signal {{ 'urgent' if signal.urgency_score >= 30 else 'medium' if signal.urgency_score >= 15 else 'low' }}">
             <form method="POST" action="/signal/{{ signal.id }}/delete" style="display: inline;">
-                <button type="submit" class="delete-btn" onclick="return confirm('Delete this signal?');">🗑️ Delete</button>
+                <button type="submit" class="delete-btn">🗑️ Delete</button>
             </form>
             <form method="POST" action="/signal/{{ signal.id }}/ignore-user" style="display: inline;">
                 <button type="submit" class="ignore-btn" onclick="return confirm('Ignore all posts from {{ signal.author }}?');">🚫 Ignore User</button>
@@ -1026,7 +1026,7 @@ SIGNAL_DETAIL_TEMPLATE = '''
         <h1>📡 Signal Details</h1>
         <div>
             <form method="POST" action="/signal/{{ signal.id }}/delete" style="display: inline;">
-                <button type="submit" class="btn btn-danger" onclick="return confirm('Delete this signal?');">🗑️ Delete Signal</button>
+                <button type="submit" class="btn btn-danger">🗑️ Delete Signal</button>
             </form>
             <a href="/" class="back-btn">← Back to Dashboard</a>
         </div>
