@@ -102,7 +102,7 @@ def dashboard():
         
         # Get recent signals
         cursor.execute('''
-        SELECT platform, title, content, author, url, urgency_score, 
+        SELECT id, platform, title, content, author, url, urgency_score, 
                detected_at, keywords_matched, tech_stack
         FROM multi_platform_signals 
         ORDER BY detected_at DESC 
@@ -112,6 +112,7 @@ def dashboard():
         signals = []
         for row in cursor.fetchall():
             signals.append({
+                'id': row['id'],  # Add ID for linking
                 'platform': row['platform'],
                 'title': row['title'],
                 'content': row['content'][:200] + '...' if len(row['content']) > 200 else row['content'],
@@ -130,6 +131,69 @@ def dashboard():
         logger.error(f"Dashboard error: {e}")
     
     return render_template_string(DASHBOARD_TEMPLATE, signals=signals)
+
+@app.route('/signal/<int:signal_id>')
+def signal_detail(signal_id):
+    """View individual signal details and select template"""
+    if not check_auth():
+        return redirect('/login')
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get specific signal
+        cursor.execute('''
+        SELECT id, platform, title, content, author, url, urgency_score, 
+               detected_at, keywords_matched, tech_stack, budget_range,
+               responded, template_used, notes
+        FROM multi_platform_signals 
+        WHERE id = %s
+        ''', (signal_id,))
+        
+        signal = cursor.fetchone()
+        conn.close()
+        
+        if not signal:
+            return "Signal not found", 404
+            
+        # Parse JSON fields
+        signal['keywords_matched'] = json.loads(signal['keywords_matched']) if signal['keywords_matched'] else []
+        signal['tech_stack'] = json.loads(signal['tech_stack']) if signal['tech_stack'] else []
+        
+        return render_template_string(SIGNAL_DETAIL_TEMPLATE, signal=signal)
+        
+    except Exception as e:
+        logger.error(f"Error loading signal: {e}")
+        return "Error loading signal", 500
+
+@app.route('/signal/<int:signal_id>/respond', methods=['POST'])
+def respond_to_signal(signal_id):
+    """Mark signal as responded with template"""
+    if not check_auth():
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    try:
+        template_used = request.form.get('template')
+        notes = request.form.get('notes', '')
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        UPDATE multi_platform_signals 
+        SET responded = TRUE, template_used = %s, notes = %s
+        WHERE id = %s
+        ''', (template_used, notes, signal_id))
+        
+        conn.commit()
+        conn.close()
+        
+        return redirect(f'/signal/{signal_id}')
+        
+    except Exception as e:
+        logger.error(f"Error updating signal: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/signals')
 def api_signals():
@@ -557,7 +621,7 @@ DASHBOARD_TEMPLATE = '''
     
     {% if signals %}
         {% for signal in signals %}
-        <div class="signal {{ 'urgent' if signal.urgency_score >= 30 else 'medium' if signal.urgency_score >= 15 else 'low' }}">
+        <div class="signal {{ 'urgent' if signal.urgency_score >= 30 else 'medium' if signal.urgency_score >= 15 else 'low' }}" style="cursor: pointer;" onclick="window.location.href='/signal/{{ signal.id }}'">
             <span class="platform {{ signal.platform }}">{{ signal.platform.upper() }}</span>
             <strong>{{ signal.title }}</strong>
             <br>
@@ -566,8 +630,9 @@ DASHBOARD_TEMPLATE = '''
                 👤 {{ signal.author }} | 
                 🎯 Score: {{ signal.urgency_score }} | 
                 ⏰ {{ signal.detected_at }}
+                | <a href="/signal/{{ signal.id }}" style="color: #00ff00;">View Details</a>
                 {% if signal.url %}
-                | <a href="{{ signal.url }}" target="_blank" style="color: #00ff00;">View Post</a>
+                | <a href="{{ signal.url }}" target="_blank" style="color: #00ff00;" onclick="event.stopPropagation();">View Post</a>
                 {% endif %}
             </small>
         </div>
@@ -596,6 +661,229 @@ DASHBOARD_TEMPLATE = '''
         // Auto-refresh page every 5 minutes
         setTimeout(() => location.reload(), 300000);
     </script>
+</body>
+</html>
+'''
+
+SIGNAL_DETAIL_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Signal Details - BBT Beacon</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { 
+            font-family: monospace; 
+            background: #0a0a0a; 
+            color: #00ff00; 
+            margin: 0; 
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header { 
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #00ff00; 
+            padding-bottom: 20px; 
+            margin-bottom: 20px;
+        }
+        .back-btn {
+            color: #00ff00;
+            text-decoration: none;
+            padding: 10px 20px;
+            border: 1px solid #00ff00;
+            border-radius: 5px;
+        }
+        .signal-detail {
+            background: #1a1a1a;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        .platform { 
+            display: inline-block; 
+            padding: 5px 15px; 
+            border-radius: 5px; 
+            font-size: 14px; 
+            margin-bottom: 20px;
+        }
+        .reddit { background: #ff4500; color: white; }
+        .upwork { background: #14a800; color: white; }
+        .github { background: #333; color: white; }
+        .twitter { background: #1da1f2; color: white; }
+        .field {
+            margin: 15px 0;
+            padding: 15px;
+            background: #0a0a0a;
+            border-radius: 5px;
+        }
+        .field-label {
+            color: #888;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+        .tech-tag, .keyword-tag {
+            display: inline-block;
+            padding: 3px 10px;
+            margin: 3px;
+            background: #00ff00;
+            color: #0a0a0a;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .response-section {
+            background: #1a1a1a;
+            padding: 30px;
+            border-radius: 10px;
+            border: 2px solid #00ff00;
+        }
+        .template-select {
+            width: 100%;
+            padding: 10px;
+            background: #0a0a0a;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            font-family: monospace;
+            margin: 10px 0;
+        }
+        .notes-input {
+            width: 100%;
+            min-height: 100px;
+            padding: 10px;
+            background: #0a0a0a;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            font-family: monospace;
+            margin: 10px 0;
+            resize: vertical;
+        }
+        .btn {
+            padding: 10px 30px;
+            margin: 10px 5px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: monospace;
+            font-weight: bold;
+        }
+        .btn-primary {
+            background: #00ff00;
+            color: #0a0a0a;
+        }
+        .btn-secondary {
+            background: #666;
+            color: white;
+        }
+        .responded-badge {
+            background: #2ed573;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .external-link {
+            color: #00ff00;
+            text-decoration: none;
+            padding: 10px 20px;
+            border: 1px solid #00ff00;
+            border-radius: 5px;
+            display: inline-block;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📡 Signal Details</h1>
+        <a href="/" class="back-btn">← Back to Dashboard</a>
+    </div>
+    
+    <div class="signal-detail">
+        <span class="platform {{ signal.platform }}">{{ signal.platform.upper() }}</span>
+        {% if signal.responded %}
+        <span class="responded-badge">✅ Responded</span>
+        {% endif %}
+        
+        <h2>{{ signal.title }}</h2>
+        
+        <div class="field">
+            <div class="field-label">CONTENT</div>
+            {{ signal.content }}
+        </div>
+        
+        <div class="field">
+            <div class="field-label">DETAILS</div>
+            👤 Author: {{ signal.author }}<br>
+            🎯 Urgency Score: {{ signal.urgency_score }}<br>
+            ⏰ Detected: {{ signal.detected_at }}<br>
+            {% if signal.budget_range %}
+            💰 Budget: {{ signal.budget_range }}<br>
+            {% endif %}
+        </div>
+        
+        {% if signal.tech_stack %}
+        <div class="field">
+            <div class="field-label">TECH STACK</div>
+            {% for tech in signal.tech_stack %}
+            <span class="tech-tag">{{ tech }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+        
+        {% if signal.keywords_matched %}
+        <div class="field">
+            <div class="field-label">MATCHED KEYWORDS</div>
+            {% for keyword in signal.keywords_matched %}
+            <span class="keyword-tag">{{ keyword }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+        
+        {% if signal.url %}
+        <a href="{{ signal.url }}" target="_blank" class="external-link">🔗 View Original Post</a>
+        {% endif %}
+    </div>
+    
+    <div class="response-section">
+        <h3>📝 Response Management</h3>
+        
+        {% if signal.responded %}
+            <div class="field">
+                <div class="field-label">TEMPLATE USED</div>
+                {{ signal.template_used or 'None' }}
+            </div>
+            {% if signal.notes %}
+            <div class="field">
+                <div class="field-label">NOTES</div>
+                {{ signal.notes }}
+            </div>
+            {% endif %}
+        {% else %}
+            <form method="POST" action="/signal/{{ signal.id }}/respond">
+                <div class="field">
+                    <div class="field-label">SELECT TEMPLATE</div>
+                    <select name="template" class="template-select" required>
+                        <option value="">-- Choose Template --</option>
+                        <option value="urgent_fix">🚨 Urgent Fix Response</option>
+                        <option value="consultation">💼 Consultation Offer</option>
+                        <option value="quick_help">⚡ Quick Help</option>
+                        <option value="full_service">🛠️ Full Service Proposal</option>
+                        <option value="custom">✍️ Custom Response</option>
+                    </select>
+                </div>
+                
+                <div class="field">
+                    <div class="field-label">NOTES (Optional)</div>
+                    <textarea name="notes" class="notes-input" placeholder="Add any notes about this response..."></textarea>
+                </div>
+                
+                <button type="submit" class="btn btn-primary">Mark as Responded</button>
+                <a href="{{ signal.url }}" target="_blank" class="btn btn-secondary">Open Post to Respond</a>
+            </form>
+        {% endif %}
+    </div>
 </body>
 </html>
 '''
