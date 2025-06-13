@@ -61,6 +61,18 @@ def init_database():
         )
         ''')
         
+        # Create ignored users table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ignored_users (
+            id SERIAL PRIMARY KEY,
+            platform TEXT NOT NULL,
+            username TEXT NOT NULL,
+            reason TEXT,
+            ignored_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(platform, username)
+        )
+        ''')
+        
         conn.commit()
         conn.close()
         logger.info("✅ Database initialized")
@@ -216,6 +228,49 @@ def delete_signal(signal_id):
         logger.error(f"Error deleting signal: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/signal/<int:signal_id>/ignore-user', methods=['POST'])
+def ignore_user(signal_id):
+    """Add signal author to ignore list"""
+    if not check_auth():
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get signal author and platform
+        cursor.execute('SELECT author, platform FROM multi_platform_signals WHERE id = %s', (signal_id,))
+        result = cursor.fetchone()
+        
+        if result:
+            author = result['author']
+            platform = result['platform']
+            
+            # Add to ignored users
+            cursor.execute('''
+            INSERT INTO ignored_users (platform, username, reason) 
+            VALUES (%s, %s, %s)
+            ON CONFLICT (platform, username) DO NOTHING
+            ''', (platform, author, 'Spam/Low quality'))
+            
+            # Update the in-memory ignored users set
+            monitor.ignored_users.add((platform, author))
+            
+            # Delete all signals from this user
+            cursor.execute('''
+            DELETE FROM multi_platform_signals 
+            WHERE author = %s AND platform = %s
+            ''', (author, platform))
+            
+            conn.commit()
+        
+        conn.close()
+        return redirect('/')
+        
+    except Exception as e:
+        logger.error(f"Error ignoring user: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/signals')
 def api_signals():
     """API endpoint for live signal updates"""
@@ -259,9 +314,34 @@ class BeaconMonitor:
             'reddit_client_secret': os.getenv('REDDIT_CLIENT_SECRET'),
             'twitter_bearer_token': os.getenv('TWITTER_BEARER_TOKEN'),
         }
+        self.ignored_users = self.load_ignored_users()
+    
+    def load_ignored_users(self):
+        """Load ignored users from database"""
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT platform, username FROM ignored_users')
+            ignored = set()
+            for row in cursor.fetchall():
+                ignored.add((row['platform'], row['username']))
+            conn.close()
+            return ignored
+        except Exception as e:
+            logger.error(f"Error loading ignored users: {e}")
+            return set()
+    
+    def is_user_ignored(self, platform, username):
+        """Check if user is ignored"""
+        return (platform, username) in self.ignored_users
     
     def save_signal(self, signal):
         """Save a signal to the database"""
+        # Check if user is ignored
+        if self.is_user_ignored(signal['platform'], signal['author']):
+            logger.info(f"🚫 Skipping signal from ignored user: {signal['author']}")
+            return
+            
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -707,6 +787,20 @@ DASHBOARD_TEMPLATE = '''
         .delete-btn:hover {
             background: #ff3838;
         }
+        .ignore-btn {
+            background: #ff9f43;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            float: right;
+            margin-left: 10px;
+        }
+        .ignore-btn:hover {
+            background: #ff8c00;
+        }
     </style>
 </head>
 <body>
@@ -744,6 +838,9 @@ DASHBOARD_TEMPLATE = '''
         <div class="signal {{ 'urgent' if signal.urgency_score >= 30 else 'medium' if signal.urgency_score >= 15 else 'low' }}">
             <form method="POST" action="/signal/{{ signal.id }}/delete" style="display: inline;">
                 <button type="submit" class="delete-btn" onclick="return confirm('Delete this signal?');">🗑️ Delete</button>
+            </form>
+            <form method="POST" action="/signal/{{ signal.id }}/ignore-user" style="display: inline;">
+                <button type="submit" class="ignore-btn" onclick="return confirm('Ignore all posts from {{ signal.author }}?');">🚫 Ignore User</button>
             </form>
             <div style="cursor: pointer;" onclick="window.location.href='/signal/{{ signal.id }}'">
                 <span class="platform {{ signal.platform }}">{{ signal.platform.upper() }}</span>
@@ -1024,6 +1121,9 @@ SIGNAL_DETAIL_TEMPLATE = '''
 '''
 
 # ============= MAIN STARTUP =============
+
+# Global monitor instance
+monitor = None
 
 if __name__ == '__main__':
     # Initialize database
