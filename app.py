@@ -5,14 +5,23 @@ Password-protected beacon control center
 """
 
 from flask import Flask, render_template, request, redirect, session, jsonify
-import sqlite3
+import psycopg2
+import psycopg2.extras
 import json
 import os
 from datetime import datetime, timedelta
 import hashlib
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'your-secret-key-change-this')
+
+# Database connection
+DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://bbt_beacon_database_user:4yBLYDW0miHDge4ud1VSilpBFuz27ZcT@dpg-d15naleuk2gs73firtqg-a.ohio-postgres.render.com/bbt_beacon_database')
+
+def get_db_connection():
+    """Get PostgreSQL database connection"""
+    return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
 
 # Password protection
 ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'beacon2025')
@@ -45,7 +54,7 @@ def dashboard():
     
     # Get signals from database
     try:
-        conn = sqlite3.connect('distress_beacon.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         # Get recent signals
@@ -60,15 +69,15 @@ def dashboard():
         signals = []
         for row in cursor.fetchall():
             signals.append({
-                'platform': row[0],
-                'title': row[1],
-                'content': row[2][:200] + '...' if len(row[2]) > 200 else row[2],
-                'author': row[3],
-                'url': row[4],
-                'urgency_score': row[5],
-                'detected_at': row[6],
-                'keywords_matched': json.loads(row[7]) if row[7] else [],
-                'tech_stack': json.loads(row[8]) if row[8] else []
+                'platform': row['platform'],
+                'title': row['title'],
+                'content': row['content'][:200] + '...' if len(row['content']) > 200 else row['content'],
+                'author': row['author'],
+                'url': row['url'],
+                'urgency_score': row['urgency_score'],
+                'detected_at': row['detected_at'],
+                'keywords_matched': json.loads(row['keywords_matched']) if row['keywords_matched'] else [],
+                'tech_stack': json.loads(row['tech_stack']) if row['tech_stack'] else []
             })
         
         conn.close()
@@ -85,7 +94,7 @@ def api_signals():
         return jsonify({'error': 'Not authenticated'}), 401
     
     try:
-        conn = sqlite3.connect('distress_beacon.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
@@ -94,17 +103,17 @@ def api_signals():
                SUM(CASE WHEN urgency_score >= 15 AND urgency_score < 30 THEN 1 ELSE 0 END) as medium,
                SUM(CASE WHEN urgency_score < 15 THEN 1 ELSE 0 END) as low
         FROM multi_platform_signals 
-        WHERE detected_at > datetime('now', '-24 hours')
+        WHERE detected_at > NOW() - INTERVAL '24 hours'
         ''')
         
         stats = cursor.fetchone()
         conn.close()
         
         return jsonify({
-            'total_24h': stats[0],
-            'urgent': stats[1],
-            'medium': stats[2], 
-            'low': stats[3],
+            'total_24h': stats['total'] or 0,
+            'urgent': stats['urgent'] or 0,
+            'medium': stats['medium'] or 0, 
+            'low': stats['low'] or 0,
             'timestamp': datetime.now().isoformat()
         })
         

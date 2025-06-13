@@ -7,11 +7,13 @@ Runs continuously on Railway
 import os
 import time
 import threading
-import sqlite3
+import psycopg2
+import psycopg2.extras
 import json
 import logging
 from datetime import datetime
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 
 # Load environment variables
 load_dotenv()
@@ -26,6 +28,10 @@ logger = logging.getLogger('BeaconRunner')
 class BeaconRunner:
     def __init__(self):
         self.running = True
+        
+        # Database connection
+        self.database_url = os.getenv('DATABASE_URL', 'postgresql://bbt_beacon_database_user:4yBLYDW0miHDge4ud1VSilpBFuz27ZcT@dpg-d15naleuk2gs73firtqg-a.ohio-postgres.render.com/bbt_beacon_database')
+        
         self.init_database()
         
         # Load credentials from environment
@@ -40,14 +46,18 @@ class BeaconRunner:
         
         logger.info("🚀 BBT Beacon Runner initialized")
         
+    def get_db_connection(self):
+        """Get PostgreSQL database connection"""
+        return psycopg2.connect(self.database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+        
     def init_database(self):
         """Initialize the signals database"""
-        conn = sqlite3.connect('distress_beacon.db')
+        conn = self.get_db_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS multi_platform_signals (
-            id INTEGER PRIMARY KEY,
+            id SERIAL PRIMARY KEY,
             platform TEXT NOT NULL,
             platform_id TEXT UNIQUE,
             title TEXT,
@@ -73,14 +83,15 @@ class BeaconRunner:
     def save_signal(self, signal):
         """Save a signal to the database"""
         try:
-            conn = sqlite3.connect('distress_beacon.db')
+            conn = self.get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute('''
-            INSERT OR IGNORE INTO multi_platform_signals 
+            INSERT INTO multi_platform_signals 
             (platform, platform_id, title, content, author, url, created_utc, 
              urgency_score, budget_range, tech_stack, keywords_matched)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (platform_id) DO NOTHING
             ''', (
                 signal['platform'], signal['platform_id'], signal['title'],
                 signal['content'], signal['author'], signal['url'],
@@ -351,8 +362,12 @@ class BeaconRunner:
             }
         ]
         
-        for signal in mock_signals:
-            self.save_signal(signal)
+        while self.running:
+            for signal in mock_signals:
+                # Update timestamp for fresh signal
+                signal['platform_id'] = f'mock_reddit_{int(time.time())}'
+                signal['created_utc'] = time.time()
+                self.save_signal(signal)
             time.sleep(300)  # Every 5 minutes
     
     def generate_mock_twitter_signals(self):
@@ -372,8 +387,12 @@ class BeaconRunner:
             }
         ]
         
-        for signal in mock_signals:
-            self.save_signal(signal)
+        while self.running:
+            for signal in mock_signals:
+                # Update timestamp for fresh signal
+                signal['platform_id'] = f'mock_twitter_{int(time.time())}'
+                signal['created_utc'] = time.time()
+                self.save_signal(signal)
             time.sleep(600)  # Every 10 minutes
     
     def github_monitor(self):
