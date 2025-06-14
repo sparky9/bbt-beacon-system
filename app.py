@@ -105,7 +105,13 @@ def init_database():
         ('reddit', 'hire', 'business', 3),
         ('reddit', 'budget', 'business', 2),
         ('upwork', 'asap', 'crisis', 3),
-        ('upwork', 'urgent', 'crisis', 3)
+        ('upwork', 'urgent', 'crisis', 3),
+        ('twitter', 'help', 'crisis', 3),
+        ('twitter', 'urgent', 'crisis', 3),
+        ('twitter', 'developer', 'business', 2),
+        ('twitter', 'broken', 'crisis', 2),
+        ('twitter', 'hire', 'business', 3),
+        ('twitter', 'freelance', 'business', 3)
         ON CONFLICT (platform, keyword) DO NOTHING
         ''')
         
