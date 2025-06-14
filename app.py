@@ -73,6 +73,42 @@ def init_database():
         )
         ''')
         
+        # Create dynamic keywords table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS platform_keywords (
+            id SERIAL PRIMARY KEY,
+            platform TEXT NOT NULL,
+            keyword TEXT NOT NULL,
+            category TEXT DEFAULT 'general',
+            active BOOLEAN DEFAULT TRUE,
+            priority INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(platform, keyword)
+        )
+        ''')
+        
+        # Insert default keywords for each platform
+        cursor.execute('''
+        INSERT INTO platform_keywords (platform, keyword, category, priority) VALUES
+        ('stackoverflow', 'urgent', 'crisis', 3),
+        ('stackoverflow', 'help', 'crisis', 2),
+        ('stackoverflow', 'stuck', 'crisis', 2),
+        ('stackoverflow', 'deadline', 'business', 3),
+        ('stackoverflow', 'client', 'business', 2),
+        ('hackernews', 'consulting', 'business', 3),
+        ('hackernews', 'freelance', 'business', 3),
+        ('hackernews', 'startup', 'business', 2),
+        ('hackernews', 'advice', 'consulting', 2),
+        ('producthunt', 'beta', 'opportunity', 2),
+        ('producthunt', 'mvp', 'opportunity', 2),
+        ('producthunt', 'scaling', 'technical', 3),
+        ('reddit', 'hire', 'business', 3),
+        ('reddit', 'budget', 'business', 2),
+        ('upwork', 'asap', 'crisis', 3),
+        ('upwork', 'urgent', 'crisis', 3)
+        ON CONFLICT (platform, keyword) DO NOTHING
+        ''')
+        
         conn.commit()
         conn.close()
         logger.info("✅ Database initialized")
@@ -112,12 +148,12 @@ def dashboard():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Get recent signals
+        # Get signals sorted by urgency score (highest opportunities first)
         cursor.execute('''
         SELECT id, platform, title, content, author, url, urgency_score, 
                detected_at, keywords_matched, tech_stack
         FROM multi_platform_signals 
-        ORDER BY detected_at DESC 
+        ORDER BY urgency_score DESC, detected_at DESC 
         LIMIT 50
         ''')
         
@@ -302,6 +338,104 @@ def api_signals():
         })
         
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/keywords')
+def keywords_manager():
+    """Keyword management interface"""
+    if not check_auth():
+        return redirect('/login')
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get keywords grouped by platform
+        cursor.execute('''
+        SELECT platform, keyword, category, active, priority 
+        FROM platform_keywords 
+        ORDER BY platform, priority DESC, keyword
+        ''')
+        
+        keywords_by_platform = {}
+        for row in cursor.fetchall():
+            platform = row['platform']
+            if platform not in keywords_by_platform:
+                keywords_by_platform[platform] = []
+            keywords_by_platform[platform].append({
+                'keyword': row['keyword'],
+                'category': row['category'],
+                'active': row['active'],
+                'priority': row['priority']
+            })
+        
+        conn.close()
+        
+        return render_template_string(KEYWORDS_TEMPLATE, keywords=keywords_by_platform)
+        
+    except Exception as e:
+        logger.error(f"Keywords manager error: {e}")
+        return f"Error: {e}"
+
+@app.route('/keywords/add', methods=['POST'])
+def add_keyword():
+    """Add a new keyword"""
+    if not check_auth():
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    try:
+        platform = request.form.get('platform')
+        keyword = request.form.get('keyword')
+        category = request.form.get('category', 'general')
+        priority = int(request.form.get('priority', 1))
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        INSERT INTO platform_keywords (platform, keyword, category, priority) 
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (platform, keyword) DO UPDATE SET
+        category = EXCLUDED.category,
+        priority = EXCLUDED.priority,
+        active = TRUE
+        ''', (platform, keyword.lower(), category, priority))
+        
+        conn.commit()
+        conn.close()
+        
+        return redirect('/keywords')
+        
+    except Exception as e:
+        logger.error(f"Error adding keyword: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/keywords/toggle', methods=['POST'])
+def toggle_keyword():
+    """Toggle keyword active status"""
+    if not check_auth():
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    try:
+        platform = request.form.get('platform')
+        keyword = request.form.get('keyword')
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        UPDATE platform_keywords 
+        SET active = NOT active 
+        WHERE platform = %s AND keyword = %s
+        ''', (platform, keyword))
+        
+        conn.commit()
+        conn.close()
+        
+        return redirect('/keywords')
+        
+    except Exception as e:
+        logger.error(f"Error toggling keyword: {e}")
         return jsonify({'error': str(e)}), 500
 
 # ============= BEACON MONITORING =============
@@ -810,6 +944,9 @@ DASHBOARD_TEMPLATE = '''
         <h1>🚨 BBT BEACON CONTROL CENTER 🚨</h1>
         <p>24/7 Developer Crisis Monitoring System</p>
         <p class="status">✅ All monitors running | Auto-refreshes every 5 minutes</p>
+        <div style="text-align: center; margin-top: 15px;">
+            <a href="/keywords" style="color: #00ff00; text-decoration: none; padding: 8px 15px; border: 1px solid #00ff00; border-radius: 5px; margin: 0 10px;">🔍 Manage Keywords</a>
+        </div>
     </div>
     
     <div class="stats">
@@ -1115,6 +1252,245 @@ SIGNAL_DETAIL_TEMPLATE = '''
                 <a href="{{ signal.url }}" target="_blank" class="btn btn-secondary">Open Post to Respond</a>
             </form>
         {% endif %}
+    </div>
+</body>
+</html>
+'''
+
+KEYWORDS_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BBT Beacon Keywords Manager</title>
+    <style>
+        body {
+            background: #0a0a0a;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            margin: 0;
+            padding: 20px;
+        }
+        h1, h2 {
+            color: #00ff00;
+            text-shadow: 0 0 10px #00ff00;
+        }
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #00ff00;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        .nav {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .nav a {
+            color: #00ff00;
+            text-decoration: none;
+            margin: 0 15px;
+            padding: 10px 20px;
+            border: 1px solid #00ff00;
+            border-radius: 5px;
+        }
+        .nav a:hover {
+            background: #00ff00;
+            color: #0a0a0a;
+        }
+        .platform-section {
+            margin: 30px 0;
+            padding: 20px;
+            border: 1px solid #00ff00;
+            border-radius: 10px;
+            background: #111;
+        }
+        .platform-title {
+            color: #00ff00;
+            font-size: 18px;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+        }
+        .keyword-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+            margin: 15px 0;
+        }
+        .keyword-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: #1a1a1a;
+            border-radius: 5px;
+            border-left: 4px solid;
+        }
+        .keyword-item.active {
+            border-left-color: #00ff00;
+        }
+        .keyword-item.inactive {
+            border-left-color: #666;
+            opacity: 0.6;
+        }
+        .keyword-text {
+            flex: 1;
+        }
+        .keyword-category {
+            font-size: 10px;
+            color: #888;
+            margin-left: 5px;
+        }
+        .keyword-priority {
+            color: #ffff00;
+            margin-left: 5px;
+            font-weight: bold;
+        }
+        .toggle-btn {
+            padding: 2px 8px;
+            font-size: 10px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        .toggle-btn.active {
+            background: #ff6600;
+            color: white;
+        }
+        .toggle-btn.inactive {
+            background: #00ff00;
+            color: #0a0a0a;
+        }
+        .add-form {
+            margin-top: 20px;
+            padding: 15px;
+            background: #0a0a0a;
+            border-radius: 5px;
+            border: 1px solid #333;
+        }
+        .form-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+        .form-input {
+            padding: 8px;
+            background: #1a1a1a;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        .form-select {
+            padding: 8px;
+            background: #1a1a1a;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 3px;
+        }
+        .add-btn {
+            padding: 8px 15px;
+            background: #00ff00;
+            color: #0a0a0a;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .add-btn:hover {
+            background: #00cc00;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔍 BBT BEACON KEYWORDS MANAGER</h1>
+        <p>Manage monitoring keywords for all platforms</p>
+    </div>
+    
+    <div class="nav">
+        <a href="/">← Back to Dashboard</a>
+        <a href="/keywords">Keywords Manager</a>
+    </div>
+    
+    {% for platform, platform_keywords in keywords.items() %}
+    <div class="platform-section">
+        <div class="platform-title">{{ platform.upper() }} Keywords</div>
+        
+        <div class="keyword-grid">
+            {% for keyword_data in platform_keywords %}
+            <div class="keyword-item {% if keyword_data.active %}active{% else %}inactive{% endif %}">
+                <div class="keyword-text">
+                    {{ keyword_data.keyword }}
+                    <span class="keyword-category">[{{ keyword_data.category }}]</span>
+                    <span class="keyword-priority">P{{ keyword_data.priority }}</span>
+                </div>
+                <form method="POST" action="/keywords/toggle" style="margin: 0;">
+                    <input type="hidden" name="platform" value="{{ platform }}">
+                    <input type="hidden" name="keyword" value="{{ keyword_data.keyword }}">
+                    <button type="submit" class="toggle-btn {% if keyword_data.active %}active{% else %}inactive{% endif %}">
+                        {% if keyword_data.active %}DISABLE{% else %}ENABLE{% endif %}
+                    </button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+        
+        <div class="add-form">
+            <strong>Add New Keyword for {{ platform.upper() }}:</strong>
+            <form method="POST" action="/keywords/add">
+                <input type="hidden" name="platform" value="{{ platform }}">
+                <div class="form-row">
+                    <input type="text" name="keyword" placeholder="Enter keyword..." class="form-input" required>
+                    <select name="category" class="form-select">
+                        <option value="general">General</option>
+                        <option value="crisis">Crisis</option>
+                        <option value="business">Business</option>
+                        <option value="technical">Technical</option>
+                        <option value="consulting">Consulting</option>
+                        <option value="opportunity">Opportunity</option>
+                    </select>
+                    <select name="priority" class="form-select">
+                        <option value="1">Priority 1 (Low)</option>
+                        <option value="2">Priority 2 (Medium)</option>
+                        <option value="3">Priority 3 (High)</option>
+                    </select>
+                    <button type="submit" class="add-btn">ADD</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% endfor %}
+    
+    <div class="platform-section">
+        <div class="platform-title">Add Keywords for New Platform</div>
+        <div class="add-form">
+            <form method="POST" action="/keywords/add">
+                <div class="form-row">
+                    <input type="text" name="platform" placeholder="Platform name..." class="form-input" required>
+                    <input type="text" name="keyword" placeholder="Keyword..." class="form-input" required>
+                    <select name="category" class="form-select">
+                        <option value="general">General</option>
+                        <option value="crisis">Crisis</option>
+                        <option value="business">Business</option>
+                        <option value="technical">Technical</option>
+                        <option value="consulting">Consulting</option>
+                        <option value="opportunity">Opportunity</option>
+                    </select>
+                    <select name="priority" class="form-select">
+                        <option value="1">Priority 1 (Low)</option>
+                        <option value="2">Priority 2 (Medium)</option>
+                        <option value="3">Priority 3 (High)</option>
+                    </select>
+                    <button type="submit" class="add-btn">ADD</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <div style="text-align: center; margin-top: 40px; color: #666;">
+        <p>💡 Keywords are checked in real-time. Changes take effect immediately.</p>
+        <p>🚀 Built with BBT Beacon System v3.0</p>
     </div>
 </body>
 </html>
